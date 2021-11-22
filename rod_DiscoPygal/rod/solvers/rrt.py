@@ -15,7 +15,7 @@ from rod.solvers.prm_basic import calc_bbox
 epsilon = FT(0.1)
 
 # The steering const
-steering_const = 0.5
+steering_const = 3
 
 # distance used for steering
 def custom_dist(p, q):
@@ -24,7 +24,7 @@ def custom_dist(p, q):
 
 # distance used to weigh the edges
 def edge_weight(p, q):
-    return math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2)
+    return math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2 + (p[2] - q[2])**2)
 
 
 def generate_path(length, obstacles, origin, destination, argument, writer, isRunning):
@@ -74,9 +74,9 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
         _p, _q = point_d_to_arr(p), point_d_to_arr(q)
         distance = custom_dist(_p, _q)
         if distance == 0:
-            return p
-
-        steered_vector = [FT(p_i + (q_i - p_i) * (steering_const / distance)) for p_i, q_i in zip(_p, _q)]
+            return None
+        steering_dist = min(steering_const / distance, 1)
+        steered_vector = [FT(p_i + (q_i - p_i) * steering_dist) for p_i, q_i in zip(_p, _q)]
         return Point_d(3, steered_vector)
 
     def add_point_if_motion_is_valid(p, new):
@@ -95,6 +95,8 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
     # User defined metric cannot be used with the kd_tree algorithm
     nearest_neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=1, metric=custom_dist, algorithm='auto')
     nearest_neighbors.fit(_points.reshape(1, -1))
+
+    added_final_point = False
     # Try to run RRT
     print('Running RRT', file=writer)
     for i in range(num_iterations):
@@ -104,7 +106,7 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
 
         x_near = points[neighbors[0]]
         x_new = steer(x_near, x_rand, steering_const)
-        if add_point_if_motion_is_valid(x_near, x_new):
+        if x_new and add_point_if_motion_is_valid(x_near, x_new):
             points.append(x_new)
             _points = np.array([point_d_to_arr(p) for p in points])
             nearest_neighbors.fit(_points)
@@ -112,16 +114,23 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
         if (i + 1) % 100 == 0:
             print('Iterated RRT', (i+1), 'times', file=writer)
 
-
-    # Add the final point
-    neighbors = nearest_neighbors.kneighbors(np.array(point_d_to_arr(end)).reshape(1, -1), return_distance=False)[0]
-    x_near = points[neighbors[0]]
-
-    if add_point_if_motion_is_valid(x_near, end):
-        print("Added final point to RRT Tree", file=writer)
-    else:
-        print("Failed to connect final point to tree", file=writer)
-        return path
+            # Try to add the final point every once in a while
+            neighbors = nearest_neighbors.kneighbors(np.array(point_d_to_arr(end)).reshape(1, -1), return_distance=False)[0]
+            x_near = points[neighbors[0]]
+            if add_point_if_motion_is_valid(x_near, end):
+                print("Added final point to RRT Tree", file=writer)
+                added_final_point = True
+                break
+    
+    if not added_final_point:
+        # Final try to add the final point every
+        neighbors = nearest_neighbors.kneighbors(np.array(point_d_to_arr(end)).reshape(1, -1), return_distance=False)[0]
+        x_near = points[neighbors[0]]
+        if add_point_if_motion_is_valid(x_near, end):
+            print("Added final point to RRT Tree", file=writer)    
+        else:
+            print(f"Failed to connect final point to tree. Final point: {end}, closest point: {x_near}", file=writer)
+            return path
 
     # Check for path
     if nx.has_path(G, begin, end):
