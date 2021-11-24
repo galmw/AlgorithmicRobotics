@@ -1,3 +1,4 @@
+from re import X
 from bindings import *
 import random
 import math
@@ -8,8 +9,7 @@ import numpy as np
 import time
 
 from rod.solvers.collision_detection import Collision_detector
-from rod.solvers.prm_basic import point_d_to_arr
-from rod.solvers.prm_basic import calc_bbox
+from rod.solvers.prm_basic import point_d_to_arr, calc_bbox
 
 # the radius by which the rod will be expanded
 epsilon = FT(0.1)
@@ -25,6 +25,58 @@ def custom_dist(p, q):
 # distance used to weigh the edges
 def edge_weight(p, q):
     return math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2 + (p[2] - q[2])**2)
+
+def sample_free_point(x_range, y_range, z_range, length, cd):
+    rand_x = FT(random.uniform(x_range[0], x_range[1]))
+    rand_y = FT(random.uniform(y_range[0], y_range[1]))
+    rand_z = FT(random.uniform(z_range[0], z_range[1]))
+
+    # If not valid, try again
+    while not cd.is_rod_position_valid(rand_x, rand_y, rand_z, length):
+        rand_x = FT(random.uniform(x_range[0], x_range[1]))
+        rand_y = FT(random.uniform(y_range[0], y_range[1]))
+        rand_z = FT(random.uniform(z_range[0], z_range[1]))
+
+    p = Point_d(3, [rand_x, rand_y, rand_z])
+    return p
+
+def steer(p, q, steering_const):
+    _p, _q = point_d_to_arr(p), point_d_to_arr(q)
+    distance = custom_dist(_p, _q)
+    if distance == 0:
+        return None
+    if distance <= steering_const:
+        return q
+    steered_vector = [FT(p_i + (q_i - p_i) * steering_const / distance) for p_i, q_i in zip(_p, _q)]
+    return Point_d(3, steered_vector)
+
+def add_point_if_motion_is_valid(graph, graph_points, p, new, length, cd):
+    for clockwise in (True, False):
+        # check if we can add an edge to the graph
+        if cd.is_rod_motion_valid(p, new, clockwise, length):
+            weight = edge_weight(point_d_to_arr(p), point_d_to_arr(new))
+            graph.add_edge(p, new, weight=weight, clockwise=clockwise)
+            graph_points.append(new)
+            return True
+    return False
+
+
+# User defined metric cannot be used with the kd_tree algorithm
+nearest_neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=1, metric=custom_dist, algorithm='auto')
+
+def get_nearest_neighbor(points, query):
+    global nearest_neighbors
+    # sklearn (which we use for nearest neighbor search) works with numpy array
+    # of points represented as numpy arrays
+    _points = np.array([point_d_to_arr(p) for p in points])
+    # Numpy stuff
+    if len(points) == 1:
+        _points = _points.reshape(1, -1)
+
+    nearest_neighbors.fit(_points)
+    neighbors = nearest_neighbors.kneighbors(np.array(point_d_to_arr(query)).reshape(1, -1), return_distance=False)[0]
+    result = points[neighbors[0]]
+    return result
 
 
 def generate_path(length, obstacles, origin, destination, argument, writer, isRunning):
@@ -56,77 +108,29 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
     # Initiate the collision detector
     cd = Collision_detector(polygons, [], epsilon)
 
-    def sample_free_point():
-        rand_x = FT(random.uniform(x_range[0], x_range[1]))
-        rand_y = FT(random.uniform(y_range[0], y_range[1]))
-        rand_z = FT(random.uniform(z_range[0], z_range[1]))
-
-        # If not valid, try again
-        while not cd.is_rod_position_valid(rand_x, rand_y, rand_z, length):
-            rand_x = FT(random.uniform(x_range[0], x_range[1]))
-            rand_y = FT(random.uniform(y_range[0], y_range[1]))
-            rand_z = FT(random.uniform(z_range[0], z_range[1]))
-
-        p = Point_d(3, [rand_x, rand_y, rand_z])
-        return p
-
-    def steer(p, q, steering_const):
-        _p, _q = point_d_to_arr(p), point_d_to_arr(q)
-        distance = custom_dist(_p, _q)
-        if distance == 0:
-            return None
-        steering_dist = min(steering_const / distance, 1)
-        steered_vector = [FT(p_i + (q_i - p_i) * steering_dist) for p_i, q_i in zip(_p, _q)]
-        return Point_d(3, steered_vector)
-
-    def add_point_if_motion_is_valid(p, new):
-        for clockwise in (True, False):
-            # check if we can add an edge to the graph
-            if cd.is_rod_motion_valid(p, new, clockwise, length):
-                weight = edge_weight(point_d_to_arr(p), point_d_to_arr(new))
-                G.add_edge(p, new, weight=weight, clockwise=clockwise)
-                return True
-        return False
-
-    # sklearn (which we use for nearest neighbor search) works with numpy array
-    # of points represented as numpy arrays
-    _points = np.array([point_d_to_arr(p) for p in points])
-
-    # User defined metric cannot be used with the kd_tree algorithm
-    nearest_neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=1, metric=custom_dist, algorithm='auto')
-    nearest_neighbors.fit(_points.reshape(1, -1))
-
     added_final_point = False
     # Try to run RRT
     print('Running RRT', file=writer)
     for i in range(num_iterations):
-        x_rand = sample_free_point()
-        # Obtain the 1 nearest neighbors
-        neighbors = nearest_neighbors.kneighbors(np.array(point_d_to_arr(x_rand)).reshape(1, -1), return_distance=False)[0]
-
-        x_near = points[neighbors[0]]
+        x_rand = sample_free_point(x_range, y_range, z_range, length, cd)
+        x_near = get_nearest_neighbor(points, x_rand)
         x_new = steer(x_near, x_rand, steering_const)
-        if x_new and add_point_if_motion_is_valid(x_near, x_new):
-            points.append(x_new)
-            _points = np.array([point_d_to_arr(p) for p in points])
-            nearest_neighbors.fit(_points)
+        if x_new:
+            add_point_if_motion_is_valid(G, points, x_near, x_new, length, cd)
 
         if (i + 1) % 100 == 0:
             print('Iterated RRT', (i+1), 'times', file=writer)
-
             # Try to add the final point every once in a while
-            neighbors = nearest_neighbors.kneighbors(np.array(point_d_to_arr(end)).reshape(1, -1), return_distance=False)[0]
-            x_near = points[neighbors[0]]
-            if add_point_if_motion_is_valid(x_near, end):
+            x_near = get_nearest_neighbor(points, end)
+            if add_point_if_motion_is_valid(G, points, x_near, end, length, cd):
                 print("Added final point to RRT Tree", file=writer)
                 added_final_point = True
                 break
     
     if not added_final_point:
         # Final try to add the final point every
-        neighbors = nearest_neighbors.kneighbors(np.array(point_d_to_arr(end)).reshape(1, -1), return_distance=False)[0]
-        x_near = points[neighbors[0]]
-        if add_point_if_motion_is_valid(x_near, end):
+        x_near = get_nearest_neighbor(points, end)
+        if add_point_if_motion_is_valid(G, points, x_near, end, length, cd):
             print("Added final point to RRT Tree", file=writer)    
         else:
             print(f"Failed to connect final point to tree. Final point: {end}, closest point: {x_near}", file=writer)
