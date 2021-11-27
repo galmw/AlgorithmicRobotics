@@ -7,35 +7,18 @@ import sklearn.neighbors
 import numpy as np
 import time
 
-from rod.solvers.collision_detection import Collision_detector
-from rod.solvers.collision_detection import Collision_detector
+from rod.solvers.prm_basic import point_d_to_arr, calc_bbox
+
+from rod.solvers.prm_knn_angle import custom_dist_with_angle
+from rod.solvers.prm_smart_rotation import add_edge_if_motion_is_valid_smart_rotate
+from rod.solvers.prm_dynamic_epsilon import DynamicCollisionDetector
 
 # The number of nearest neighbors each vertex will try to connect to
 K = 15
 
 # the radius by which the rod will be expanded
 #DL: use dynamic size epsilon
-# epsilon = FT(0.1)
 eps = [FT(0.4), FT(0.2), FT(0.1)]
-
-# Calculate the scene's bounding box
-def calc_bbox(obstacles):
-    X = []
-    Y = []
-    for poly in obstacles:
-        for point in poly.vertices():
-            X.append(point.x())
-            Y.append(point.y())
-    min_x = min(X)
-    max_x = max(X)
-    min_y = min(Y)
-    max_y = max(Y)
-
-    return min_x, max_x, min_y, max_y
-
-# Convert CGALPY's Point_d object into an array of doubles
-def point_d_to_arr(p: Point_d):
-    return [p[i].to_double() for i in range(p.dimension())]
 
 
 def generate_path(length, obstacles, origin, destination, argument, writer, isRunning):
@@ -64,11 +47,8 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
 
     # Initiate the collision detector
     #DL: use dynamic size epsilon
-    # cd = Collision_detector(polygons, [], epsilon)
-    cds = []
-    for i in range(len(eps)):
-        cds.append(Collision_detector(polygons, [], eps[i]))
-
+    cd = DynamicCollisionDetector(eps, polygons)
+    
     # Sample landmarks
     i = 0
     while i < num_landmarks:
@@ -77,8 +57,6 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
         rand_z = FT(random.uniform(z_range[0], z_range[1]))
 
         # If valid, add to the graph
-        #DL: use the smallest epsilon (the original one) to aprove a single point
-        cd = cds[-1]
         if cd.is_rod_position_valid(rand_x, rand_y, rand_z, length):
             p = Point_d(3, [rand_x, rand_y, rand_z])
             G.add_node(p)
@@ -88,35 +66,12 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
                 print(i, "landmarks sampled", file=writer)
     print(num_landmarks, "landmarks sampled", file=writer)
 
-    # distance used for nearest neighbor search
-    # def custom_dist(p, q):
-    #     sd = math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2)
-    #     return sd
-
-    # DL: take angle into account to avoid too big a distance in the work space
-    def custom_dist(p, q):
-        a = max(p[2], q[2]) - min(p[2], q[2])
-        if a > math.pi:
-            a -= math.pi
-        sd = math.sqrt((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + 2 * a ** 2)
-        return sd
-
-    # distance used to weigh the edges
-    def edge_weight(p, q):
-        return math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2)
-
-    #DL:
-    # add the additional distance along the arc that the far edge does
-    # def edge_weight(p, q):
-    #     return math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2 + ((p[2] - q[2])*length.to_double())**2)
-
-
     # sklearn (which we use for nearest neighbor search) works with numpy array
     # of points represented as numpy arrays
     _points = np.array([point_d_to_arr(p) for p in points])
 
     # User defined metric cannot be used with the kd_tree algorithm
-    nearest_neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=K, metric=custom_dist, algorithm='auto')
+    nearest_neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=K, metric=custom_dist_with_angle, algorithm='auto')
     # nearest_neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=K, algorithm='kd_tree')
     nearest_neighbors.fit(_points)
     # Try to connect neighbors
@@ -132,29 +87,7 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
 
         for j in k_neighbors[0]:
             neighbor = points[j]
-            #DL: test shorter angle first, so if both directions are doable, we are left with the shorter rotation
-            a1 = point_d_to_arr(p)[2]
-            a2 = point_d_to_arr(neighbor)[2]
-            if a2 < a1:
-                a2 = a2 + 2 * math.pi
-            if a2 > a1 + math.pi:
-                directions = [True, False]
-            else:
-                directions = [False, True]
-            for clockwise in directions:
-            # for clockwise in (True, False):
-                #DL: use dynamic size epsilon
-                can_connect = False
-                for cd in cds:
-                    if cd.is_rod_motion_valid(p, neighbor, clockwise, length):
-                        can_connect = True
-                        break
-
-                # check if we can add an edge to the graph
-                if can_connect:
-                    weight = edge_weight(point_d_to_arr(p), point_d_to_arr(neighbor))
-                    G.add_edge(p, neighbor, weight=weight, clockwise=clockwise)
-                    break
+            add_edge_if_motion_is_valid_smart_rotate(G, cd, p, neighbor, length)
 
         if i % 100 == 0:
             print('Connected', i, 'landmarks to their nearest neighbors', file=writer)

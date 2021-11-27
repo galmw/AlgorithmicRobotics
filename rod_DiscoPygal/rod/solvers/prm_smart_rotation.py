@@ -10,30 +10,41 @@ import time
 from rod.solvers.collision_detection import Collision_detector
 from rod.solvers.collision_detection import Collision_detector
 
+from rod.solvers.prm_basic import point_d_to_arr, calc_bbox
+
 # The number of nearest neighbors each vertex will try to connect to
 K = 15
 
 # the radius by which the rod will be expanded
 epsilon = FT(0.1)
 
-# Calculate the scene's bounding box
-def calc_bbox(obstacles):
-    X = []
-    Y = []
-    for poly in obstacles:
-        for point in poly.vertices():
-            X.append(point.x())
-            Y.append(point.y())
-    min_x = min(X)
-    max_x = max(X)
-    min_y = min(Y)
-    max_y = max(Y)
+# distance used for nearest neighbor search
+def custom_dist(p, q):
+    sd = math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2)
+    return sd
 
-    return min_x, max_x, min_y, max_y
+# distance used to weigh the edges
+def edge_weight(p, q):
+    return math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2)
 
-# Convert CGALPY's Point_d object into an array of doubles
-def point_d_to_arr(p: Point_d):
-    return [p[i].to_double() for i in range(p.dimension())]
+
+def add_edge_if_motion_is_valid_smart_rotate(graph, cd, p, new, length):
+    # DL: test shorter angle first, so if both directions are doable, we are left with the shorter rotation
+    a1 = point_d_to_arr(p)[2]
+    a2 = point_d_to_arr(new)[2]
+    if a2 < a1:
+        a2 = a2 + 2 * math.pi
+    if a2 > a1 + math.pi:
+        directions = [True, False]
+    else:
+        directions = [False, True]
+    for clockwise in directions:
+        # check if we can add an edge to the graph
+        if cd.is_rod_motion_valid(p, new, clockwise, length):
+            weight = edge_weight(point_d_to_arr(p), point_d_to_arr(new))
+            graph.add_edge(p, new, weight=weight, clockwise=clockwise)
+            return True
+    return False
 
 
 def generate_path(length, obstacles, origin, destination, argument, writer, isRunning):
@@ -80,21 +91,6 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
                 print(i, "landmarks sampled", file=writer)
     print(num_landmarks, "landmarks sampled", file=writer)
 
-    # distance used for nearest neighbor search
-    def custom_dist(p, q):
-        sd = math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2)
-        return sd
-    
-    # distance used to weigh the edges
-    def edge_weight(p, q):
-        return math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2)
-
-    #DL:
-    # add the additional distance along the arc that the far edge does
-    # def edge_weight(p, q):
-    #     return math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2 + ((p[2] - q[2])*length.to_double())**2)
-
-
     # sklearn (which we use for nearest neighbor search) works with numpy array
     # of points represented as numpy arrays
     _points = np.array([point_d_to_arr(p) for p in points])
@@ -116,21 +112,7 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
 
         for j in k_neighbors[0]:
             neighbor = points[j]
-            #DL: test shorter angle first, so if both directions are doable, we are left with the shorter rotation
-            a1 = point_d_to_arr(p)[2]
-            a2 = point_d_to_arr(neighbor)[2]
-            if a2 < a1:
-                a2 = a2 + 2 * math.pi
-            if a2 > a1 + math.pi:
-                directions = [True, False]
-            else:
-                directions = [False, True]
-            for clockwise in directions:
-                # check if we can add an edge to the graph
-                if cd.is_rod_motion_valid(p, neighbor, clockwise, length):
-                    weight = edge_weight(point_d_to_arr(p), point_d_to_arr(neighbor))
-                    G.add_edge(p, neighbor, weight=weight, clockwise=clockwise)
-                    break
+            add_edge_if_motion_is_valid_smart_rotate(G, cd, p, neighbor, length)
         if i % 100 == 0:
             print('Connected', i, 'landmarks to their nearest neighbors', file=writer)
         i += 1

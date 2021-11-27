@@ -8,22 +8,20 @@ import sklearn.neighbors
 import numpy as np
 import time
 
-from rod.solvers.collision_detection import Collision_detector
+from rod.solvers.prm_smart_rotation import add_edge_if_motion_is_valid_smart_rotate
+from rod.solvers.prm_dynamic_epsilon import DynamicCollisionDetector
+
 from rod.solvers.prm_basic import calc_bbox
-from rod.solvers.rrt import sample_free_point, steer, add_point_if_motion_is_valid, get_nearest_neighbor
+from rod.solvers.rrt import sample_free_point, steer, get_nearest_neighbor
 
 # the radius by which the rod will be expanded
-epsilon = FT(0.1)
+eps = [FT(0.4), FT(0.2), FT(0.1)]
 
 # The steering const
 steering_const = 3
 
-# Collision detector (initialized later)
-cd = None
-
 
 def generate_path(length, obstacles, origin, destination, argument, writer, isRunning):
-    global cd
     t0 = time.perf_counter()
     # Parsing of arguments
     path = []
@@ -54,9 +52,8 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
     g2_points = [end]
 
     # Initiate the collision detector
-    cd = Collision_detector(polygons, [], epsilon)
+    cd = DynamicCollisionDetector(eps, polygons)
 
-    added_final_point = False
     # Try to run Bi-RRT
     print('Running Bi-RRT', file=writer)
     curr_graph, curr_points, other_graph, other_points = G1, g1_points, G2, g2_points
@@ -66,11 +63,13 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
         x_rand = sample_free_point(x_range, y_range, z_range, length, cd)
         x_near = get_nearest_neighbor(curr_points, x_rand)
         x_new = steer(x_near, x_rand, steering_const)
-        if x_new and add_point_if_motion_is_valid(curr_graph, curr_points, x_near, x_new, length, cd):
+        if x_new and add_edge_if_motion_is_valid_smart_rotate(curr_graph, cd, x_near, x_new, length):
+            curr_points.append(x_new)
             # Try to connect the graphs
             other_x_near = get_nearest_neighbor(other_points, x_new)
             other_x_new = steer(other_x_near, x_new, steering_const)
-            if other_x_new and add_point_if_motion_is_valid(other_graph, other_points, other_x_near, other_x_new, length, cd):
+            if other_x_new and add_edge_if_motion_is_valid_smart_rotate(other_graph, cd, other_x_near, other_x_new, length):
+                other_points.append(other_x_new)
                 # Check if done
                 if other_x_new == x_new:
                     graphs_connection_point = x_new

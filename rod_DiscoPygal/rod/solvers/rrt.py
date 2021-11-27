@@ -8,23 +8,17 @@ import sklearn.neighbors
 import numpy as np
 import time
 
-from rod.solvers.collision_detection import Collision_detector
 from rod.solvers.prm_basic import point_d_to_arr, calc_bbox
+from rod.solvers.prm_knn_angle import custom_dist_with_angle
+from rod.solvers.prm_smart_rotation import add_edge_if_motion_is_valid_smart_rotate
+from rod.solvers.prm_dynamic_epsilon import DynamicCollisionDetector
+
 
 # the radius by which the rod will be expanded
-epsilon = FT(0.1)
+eps = [FT(0.4), FT(0.2), FT(0.1)]
 
 # The steering const
 steering_const = 3
-
-# distance used for steering
-def custom_dist(p, q):
-    sd = math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2 + (p[2] - q[2])**2)
-    return sd
-
-# distance used to weigh the edges
-def edge_weight(p, q):
-    return math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2 + (p[2] - q[2])**2)
 
 def sample_free_point(x_range, y_range, z_range, length, cd):
     rand_x = FT(random.uniform(x_range[0], x_range[1]))
@@ -42,7 +36,7 @@ def sample_free_point(x_range, y_range, z_range, length, cd):
 
 def steer(p, q, steering_const):
     _p, _q = point_d_to_arr(p), point_d_to_arr(q)
-    distance = custom_dist(_p, _q)
+    distance = custom_dist_with_angle(_p, _q)
     if distance == 0:
         return None
     if distance <= steering_const:
@@ -50,19 +44,8 @@ def steer(p, q, steering_const):
     steered_vector = [FT(p_i + (q_i - p_i) * steering_const / distance) for p_i, q_i in zip(_p, _q)]
     return Point_d(3, steered_vector)
 
-def add_point_if_motion_is_valid(graph, graph_points, p, new, length, cd):
-    for clockwise in (True, False):
-        # check if we can add an edge to the graph
-        if cd.is_rod_motion_valid(p, new, clockwise, length):
-            weight = edge_weight(point_d_to_arr(p), point_d_to_arr(new))
-            graph.add_edge(p, new, weight=weight, clockwise=clockwise)
-            graph_points.append(new)
-            return True
-    return False
-
-
 # User defined metric cannot be used with the kd_tree algorithm
-nearest_neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=1, metric=custom_dist, algorithm='auto')
+nearest_neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=1, metric=custom_dist_with_angle, algorithm='auto')
 
 def get_nearest_neighbor(points, query):
     global nearest_neighbors
@@ -106,31 +89,31 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
     points = [begin]
 
     # Initiate the collision detector
-    cd = Collision_detector(polygons, [], epsilon)
+    cd = DynamicCollisionDetector(eps, polygons)
 
-    added_final_point = False
     # Try to run RRT
     print('Running RRT', file=writer)
     for i in range(num_iterations):
         x_rand = sample_free_point(x_range, y_range, z_range, length, cd)
         x_near = get_nearest_neighbor(points, x_rand)
         x_new = steer(x_near, x_rand, steering_const)
-        if x_new:
-            add_point_if_motion_is_valid(G, points, x_near, x_new, length, cd)
+        if x_new and add_edge_if_motion_is_valid_smart_rotate(G, cd, x_near, x_new, length):
+            points.append(x_new)
 
         if (i + 1) % 100 == 0:
             print('Iterated RRT', (i+1), 'times', file=writer)
             # Try to add the final point every once in a while
             x_near = get_nearest_neighbor(points, end)
-            if add_point_if_motion_is_valid(G, points, x_near, end, length, cd):
+            if add_edge_if_motion_is_valid_smart_rotate(G, cd, x_near, end, length):
+                points.append(end)
                 print("Added final point to RRT Tree", file=writer)
-                added_final_point = True
                 break
     
-    if not added_final_point:
+    if end not in points:
         # Final try to add the final point every
         x_near = get_nearest_neighbor(points, end)
-        if add_point_if_motion_is_valid(G, points, x_near, end, length, cd):
+        if add_edge_if_motion_is_valid_smart_rotate(G, cd, x_near, end, length):
+            points.append(end)
             print("Added final point to RRT Tree", file=writer)    
         else:
             print(f"Failed to connect final point to tree. Final point: {end}, closest point: {x_near}", file=writer)

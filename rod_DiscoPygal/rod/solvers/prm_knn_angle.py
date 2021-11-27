@@ -8,7 +8,7 @@ import numpy as np
 import time
 
 from rod.solvers.collision_detection import Collision_detector
-from rod.solvers.collision_detection import Collision_detector
+from rod.solvers.prm_basic import point_d_to_arr, calc_bbox
 
 # The number of nearest neighbors each vertex will try to connect to
 K = 15
@@ -16,24 +16,19 @@ K = 15
 # the radius by which the rod will be expanded
 epsilon = FT(0.1)
 
-# Calculate the scene's bounding box
-def calc_bbox(obstacles):
-    X = []
-    Y = []
-    for poly in obstacles:
-        for point in poly.vertices():
-            X.append(point.x())
-            Y.append(point.y())
-    min_x = min(X)
-    max_x = max(X)
-    min_y = min(Y)
-    max_y = max(Y)
 
-    return min_x, max_x, min_y, max_y
+def custom_dist_with_angle(p, q):
+    # DL: take the angle into account to avoid too big a distance in the work space
+    a = max(p[2], q[2]) - min(p[2], q[2])
+    if a > math.pi:
+        a -= math.pi
+    sd = math.sqrt((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + 2 * a ** 2)
+    return sd
 
-# Convert CGALPY's Point_d object into an array of doubles
-def point_d_to_arr(p: Point_d):
-    return [p[i].to_double() for i in range(p.dimension())]
+
+# distance used to weigh the edges
+def edge_weight(p, q):
+    return math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2)
 
 
 def generate_path(length, obstacles, origin, destination, argument, writer, isRunning):
@@ -80,35 +75,12 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
                 print(i, "landmarks sampled", file=writer)
     print(num_landmarks, "landmarks sampled", file=writer)
 
-    # distance used for nearest neighbor search
-    # def custom_dist(p, q):
-    #     sd = math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2)
-    #     return sd
-
-    # DL: take angle into account to avoid too big a distance in the work space
-    def custom_dist(p, q):
-        a = max(p[2], q[2]) - min(p[2], q[2])
-        if a > math.pi:
-            a -= math.pi
-        sd = math.sqrt((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + 2 * a ** 2)
-        return sd
-    
-    # distance used to weigh the edges
-    def edge_weight(p, q):
-        return math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2)
-
-    #DL:
-    # add the additional distance along the arc that the far edge does
-    # def edge_weight(p, q):
-    #     return math.sqrt((p[0] - q[0])**2 + (p[1] - q[1])**2 + ((p[2] - q[2])*length.to_double())**2)
-
-
     # sklearn (which we use for nearest neighbor search) works with numpy array
     # of points represented as numpy arrays
     _points = np.array([point_d_to_arr(p) for p in points])
 
     # User defined metric cannot be used with the kd_tree algorithm
-    nearest_neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=K, metric=custom_dist, algorithm='auto')
+    nearest_neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=K, metric=custom_dist_with_angle, algorithm='auto')
     # nearest_neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=K, algorithm='kd_tree')
     nearest_neighbors.fit(_points)
     # Try to connect neighbors
