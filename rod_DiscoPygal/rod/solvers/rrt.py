@@ -109,18 +109,19 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
                 print("Added final point to RRT Tree", file=writer)
                 break
     
+    try_path = True
     if end not in points:
         # Final try to add the final point every
         x_near = get_nearest_neighbor(points, end)
         if add_edge_if_motion_is_valid_smart_rotate(G, cd, x_near, end, length):
             points.append(end)
-            print("Added final point to RRT Tree", file=writer)    
+            print("Added final point to RRT Tree", file=writer)   
         else:
-            print(f"Failed to connect final point to tree. Final point: {end}, closest point: {x_near}", file=writer)
-            return path
+            print(f"Failed to connect final point to tree. Time: Final point: {end}, closest point: {x_near}", file=writer)
+            try_path = False
 
     # Check for path
-    if nx.has_path(G, begin, end):
+    if try_path and nx.has_path(G, begin, end):
         shortest_path = nx.shortest_path(G, begin, end)
         print("path found", file=writer)
         print("distance:", nx.shortest_path_length(G, begin, end, weight='weight'), file=writer)
