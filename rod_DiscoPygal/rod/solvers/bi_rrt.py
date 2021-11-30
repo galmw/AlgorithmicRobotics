@@ -1,10 +1,8 @@
 from re import X
 from bindings import *
-import random
 import math
 import conversions
 import networkx as nx
-import sklearn.neighbors
 import numpy as np
 import time
 

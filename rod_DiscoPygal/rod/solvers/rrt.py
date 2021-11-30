@@ -4,7 +4,6 @@ import random
 import math
 import conversions
 import networkx as nx
-import sklearn.neighbors
 import numpy as np
 import time
 
@@ -20,6 +19,7 @@ eps = [FT(0.4), FT(0.2), FT(0.1)]
 # The steering const
 steering_const = 3
 
+
 def sample_free_point(x_range, y_range, z_range, length, cd):
     rand_x, rand_y, rand_z = None, None, None
     # Generate valid point
@@ -31,6 +31,7 @@ def sample_free_point(x_range, y_range, z_range, length, cd):
     p = Point_d(3, [rand_x, rand_y, rand_z])
     return p
 
+
 def steer(p, q, steering_const):
     _p, _q = point_d_to_arr(p), point_d_to_arr(q)
     distance = custom_dist_with_angle(_p, _q)
@@ -41,22 +42,11 @@ def steer(p, q, steering_const):
     steered_vector = [FT(p_i + (q_i - p_i) * steering_const / distance) for p_i, q_i in zip(_p, _q)]
     return Point_d(3, steered_vector)
 
-# User defined metric cannot be used with the kd_tree algorithm
-nearest_neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=1, metric=custom_dist_with_angle, algorithm='auto')
 
-def get_nearest_neighbor(points, query):
-    global nearest_neighbors
-    # sklearn (which we use for nearest neighbor search) works with numpy array
-    # of points represented as numpy arrays
-    _points = np.array([point_d_to_arr(p) for p in points])
-    # Numpy stuff
-    if len(points) == 1:
-        _points = _points.reshape(1, -1)
-
-    nearest_neighbors.fit(_points)
-    neighbors = nearest_neighbors.kneighbors(np.array(point_d_to_arr(query)).reshape(1, -1), return_distance=False)[0]
-    result = points[neighbors[0]]
-    return result
+def get_nearest_neighbor(points, _points, query):
+    _query = point_d_to_arr(query)
+    index = min(enumerate(_points), key=lambda _ip: custom_dist_with_angle(_ip[1], _query))[0]
+    return points[index]
 
 
 def generate_path(length, obstacles, origin, destination, argument, writer, isRunning):
@@ -84,6 +74,7 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
     G = nx.DiGraph()
     G.add_nodes_from([begin])
     points = [begin]
+    _points = [point_d_to_arr(p) for p in points]
 
     # Initiate the collision detector
     cd = DynamicCollisionDetector(eps, polygons)
@@ -92,14 +83,17 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
     print('Running RRT', file=writer)
     for i in range(num_iterations):
         x_rand = sample_free_point(x_range, y_range, z_range, length, cd)
-        x_near = get_nearest_neighbor(points, x_rand)
+        x_near = get_nearest_neighbor(points, _points, x_rand)
         x_new = steer(x_near, x_rand, steering_const)
         if x_new and add_edge_if_motion_is_valid_smart_rotate(G, cd, x_near, x_new, length):
             points.append(x_new)
+            _x_new = point_d_to_arr(x_new)
+            _points.append(_x_new)
             # Try to add the final point if it's close enough
-            if custom_dist_with_angle(point_d_to_arr(x_new), _end) <= steering_const:
+            if custom_dist_with_angle(_x_new, _end) <= steering_const:
                 if add_edge_if_motion_is_valid_smart_rotate(G, cd, x_new, end, length):
                     points.append(end)
+                    break
         if (i + 1) % 100 == 0:
             print('Iterated RRT', (i+1), 'times', file=writer)
 
