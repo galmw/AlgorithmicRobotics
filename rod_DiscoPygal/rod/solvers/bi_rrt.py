@@ -9,7 +9,7 @@ import time
 from rod.solvers.prm_smart_rotation import add_edge_if_motion_is_valid_smart_rotate
 from rod.solvers.prm_dynamic_epsilon import DynamicCollisionDetector
 
-from rod.solvers.prm_basic import calc_bbox
+from rod.solvers.prm_basic import calc_bbox, point_d_to_arr
 from rod.solvers.rrt import sample_free_point, steer, get_nearest_neighbor
 
 # the radius by which the rod will be expanded
@@ -44,30 +44,34 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
     G1 = nx.DiGraph()
     G1.add_nodes_from([begin])
     g1_points = [begin]
+    _g1_points = [point_d_to_arr(p) for p in g1_points]
 
     G2 = nx.DiGraph()
     G2.add_nodes_from([end])
     g2_points = [end]
+    _g2_points = [point_d_to_arr(p) for p in g2_points]
 
     # Initiate the collision detector
     cd = DynamicCollisionDetector(eps, polygons)
 
     # Try to run Bi-RRT
     print('Running Bi-RRT', file=writer)
-    curr_graph, curr_points, other_graph, other_points = G1, g1_points, G2, g2_points
+    curr_graph, curr_points, _curr_points, other_graph, other_points, _other_points = G1, g1_points, _g1_points, G2, g2_points, _g2_points
 
     graphs_connection_point = None
     for i in range(num_iterations):
         x_rand = sample_free_point(x_range, y_range, z_range, length, cd)
-        x_near = get_nearest_neighbor(curr_points, x_rand)
+        x_near = get_nearest_neighbor(curr_points, _curr_points, x_rand)
         x_new = steer(x_near, x_rand, steering_const)
         if x_new and add_edge_if_motion_is_valid_smart_rotate(curr_graph, cd, x_near, x_new, length):
             curr_points.append(x_new)
+            _curr_points.append(point_d_to_arr(x_new))
             # Try to connect the graphs
-            other_x_near = get_nearest_neighbor(other_points, x_new)
+            other_x_near = get_nearest_neighbor(other_points, _other_points, x_new)
             other_x_new = steer(other_x_near, x_new, steering_const)
             if other_x_new and add_edge_if_motion_is_valid_smart_rotate(other_graph, cd, other_x_near, other_x_new, length):
                 other_points.append(other_x_new)
+                _other_points.append(point_d_to_arr(other_x_new))
                 # Check if done
                 if other_x_new == x_new:
                     graphs_connection_point = x_new
@@ -75,7 +79,7 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
         if (i + 1) % 100 == 0:
             print('Iterated Bi-RRT', (i+1), 'times', file=writer)
         # Swap graphs
-        curr_graph, curr_points, other_graph, other_points = other_graph, other_points, curr_graph, curr_points
+        curr_graph, curr_points, _curr_points, other_graph, other_points, _other_points = other_graph, other_points, _other_points, curr_graph, curr_points, _curr_points
 
     # Check for path
     if graphs_connection_point:
