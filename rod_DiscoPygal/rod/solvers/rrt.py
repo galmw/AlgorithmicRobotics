@@ -21,12 +21,9 @@ eps = [FT(0.4), FT(0.2), FT(0.1)]
 steering_const = 3
 
 def sample_free_point(x_range, y_range, z_range, length, cd):
-    rand_x = FT(random.uniform(x_range[0], x_range[1]))
-    rand_y = FT(random.uniform(y_range[0], y_range[1]))
-    rand_z = FT(random.uniform(z_range[0], z_range[1]))
-
-    # If not valid, try again
-    while not cd.is_rod_position_valid(rand_x, rand_y, rand_z, length):
+    rand_x, rand_y, rand_z = None, None, None
+    # Generate valid point
+    while rand_x is None or not cd.is_rod_position_valid(rand_x, rand_y, rand_z, length):
         rand_x = FT(random.uniform(x_range[0], x_range[1]))
         rand_y = FT(random.uniform(y_range[0], y_range[1]))
         rand_z = FT(random.uniform(z_range[0], z_range[1]))
@@ -82,7 +79,7 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
 
     begin = Point_d(3, [FT(origin[0]), FT(origin[1]), FT(origin[2])])
     end = Point_d(3, [FT(destination[0]), FT(destination[1]), FT(destination[2])])
-
+    _end = point_d_to_arr(end)
     # Initiate the graph
     G = nx.DiGraph()
     G.add_nodes_from([begin])
@@ -99,29 +96,15 @@ def generate_path(length, obstacles, origin, destination, argument, writer, isRu
         x_new = steer(x_near, x_rand, steering_const)
         if x_new and add_edge_if_motion_is_valid_smart_rotate(G, cd, x_near, x_new, length):
             points.append(x_new)
-
+            # Try to add the final point if it's close enough
+            if custom_dist_with_angle(point_d_to_arr(x_new), _end) <= steering_const:
+                if add_edge_if_motion_is_valid_smart_rotate(G, cd, x_new, end, length):
+                    points.append(end)
         if (i + 1) % 100 == 0:
             print('Iterated RRT', (i+1), 'times', file=writer)
-            # Try to add the final point every once in a while
-            x_near = get_nearest_neighbor(points, end)
-            if add_edge_if_motion_is_valid_smart_rotate(G, cd, x_near, end, length):
-                points.append(end)
-                print("Added final point to RRT Tree", file=writer)
-                break
-    
-    try_path = True
-    if end not in points:
-        # Final try to add the final point every
-        x_near = get_nearest_neighbor(points, end)
-        if add_edge_if_motion_is_valid_smart_rotate(G, cd, x_near, end, length):
-            points.append(end)
-            print("Added final point to RRT Tree", file=writer)   
-        else:
-            print(f"Failed to connect final point to tree. Time: Final point: {end}, closest point: {x_near}", file=writer)
-            try_path = False
 
     # Check for path
-    if try_path and nx.has_path(G, begin, end):
+    if end in points and nx.has_path(G, begin, end):
         shortest_path = nx.shortest_path(G, begin, end)
         print("path found", file=writer)
         print("distance:", nx.shortest_path_length(G, begin, end, weight='weight'), file=writer)
