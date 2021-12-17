@@ -123,10 +123,7 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
         return 1 / (calc_edge_vertical_clearance(p, q) + 0.01)
     
     _points = np.array([point_d_to_arr(p) for p in points])    
-    """
-    def custom_weight(p ,q):
-        return calc_edge_vertical_clearance(p, q, min_y, max_y, collision_detectors, num_robots, radii)
-    """
+
     ########################
     # Constract the roadmap
     ########################
@@ -217,39 +214,6 @@ def sample_valid_landmark(min_x, max_x, min_y, max_y, collision_detectors, num_r
         if len(points) == num_robots and not collision_detection.check_intersection_static(points, radii):
             return conversions.to_point_d(points)
 
-
-
-    return min(calc_point_vertical_clearance(p, min_y, max_y, collision_detectors, num_robots, radii),
-            calc_point_vertical_clearance(q, min_y, max_y, collision_detectors, num_robots, radii))
-    """
-    clearances = []
-    # for each robot check its clearance in the free space
-    for i in range(num_robots):
-        radius = radii[i]
-        curr_clearance = calc_point_vertical_clearance(p, min_y, max_y, collision_detectors, num_robots, radii)
-        
-        while curr_point[0] < q[0]:
-
-            curr_clearance = min()
-            curr_point = Point_2(curr_point)
-        upper_clearance = FT(0)
-        checker_point = Point_2(p[0], p[1] + radius)
-        while min_y <= checker_point[1].to_double() <= max_y and collision_detectors[i].is_point_valid(checker_point):
-            upper_clearance += radii[0]
-            checker_point = Point_2(checker_point[0], checker_point[1] + radius)
-        
-        lower_clearance = FT(0)
-        checker_point = Point_2(p[0], p[1] - radius)
-        while min_y <= checker_point[1].to_double() <= max_y and collision_detectors[i].is_point_valid(checker_point):
-            # print("Checker point", checker_point, type(checker_point), "Valid", collision_detectors[i].is_point_valid(checker_point))
-            lower_clearance += radius
-            checker_point = Point_2(checker_point[0], checker_point[1] - radius)
-        
-        # print("Upper:", upper_clearance, "Lower: ", lower_clearance)
-        clearances.append(min(upper_clearance, lower_clearance))
-    
-    return clearances
-    """
     
 # check whether the edge pq is collision free
 # the collision detection module sits on top of CGAL arrangements
