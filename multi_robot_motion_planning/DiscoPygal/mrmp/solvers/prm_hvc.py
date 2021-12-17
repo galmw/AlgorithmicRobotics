@@ -1,5 +1,6 @@
 import sys
 import os.path
+from numpy.lib.function_base import average
 
 from sklearn.utils.validation import check_consistent_length
 sys.path.insert(0, os.path.dirname(__file__))
@@ -85,6 +86,9 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
 
     _points = np.array([point_d_to_arr(p) for p in points])
 
+    
+    def custom_weight(p ,q):
+        return 1 / (calc_edge_vertical_clearance(p, q, min_y, max_y, collision_detectors, num_robots, radii) + 0.01)
 
     ########################
     # Constract the roadmap
@@ -103,7 +107,7 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
         k_neighbors = kdt.kneighbors([_points[i]], return_distance=False)
 
         if edge_valid(collision_detectors, p, destinations, num_robots, radii):
-            d = distance.transformed_distance(p, destinations).to_double()
+            d = custom_weight(p, destinations)
             # Make transformed_distance into a distance that takes clearance into account
             G.add_edge(p, destinations, weight=d)
         for j in k_neighbors[0]:
@@ -111,7 +115,7 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
             if not G.has_edge(p, neighbor):
                 # check if we can add an edge to the graph
                 if edge_valid(collision_detectors, p, neighbor, num_robots, radii):
-                    d = distance.transformed_distance(p, neighbor).to_double()
+                    d = custom_weight(p, neighbor)
                     G.add_edge(p, neighbor, weight=d)
         if i % 500 == 0:
             print('Connected', i, 'landmarks to their nearest neighbors', file=writer)
@@ -149,7 +153,6 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
     return path, G
 
 
-
 # throughout the code, wherever we need to return a number of type double to CGAL,
 # we convert it using FT() (which stands for field number type)
 def point_d_to_arr(p: Point_d):
@@ -175,11 +178,42 @@ def sample_valid_landmark(min_x, max_x, min_y, max_y, collision_detectors, num_r
 
 def calc_point_vertical_clearance(p: Point_d, min_y, max_y, collision_detectors, num_robots, radii):
     clearances = []
+    # for each robot, check its clearance in the free space, and return the minimum
+    for i in range(num_robots):
+        step_size = radii[i].to_double() / 2
+        upper_clearance = 0
+        checker_point = Point_2(p[0], p[1] + FT(step_size))
+        while min_y <= checker_point[1].to_double() <= max_y and collision_detectors[i].is_point_valid(checker_point):
+            upper_clearance += step_size
+            checker_point = Point_2(checker_point[0], checker_point[1] + FT(step_size))
+        
+        lower_clearance = 0
+        checker_point = Point_2(p[0], p[1] - FT(step_size))
+        while min_y <= checker_point[1].to_double() <= max_y and collision_detectors[i].is_point_valid(checker_point):
+            # print("Checker point", checker_point, type(checker_point), "Valid", collision_detectors[i].is_point_valid(checker_point))
+            lower_clearance += step_size
+            checker_point = Point_2(checker_point[0], checker_point[1] - FT(step_size))
+        
+        # print("Upper:", upper_clearance, "Lower: ", lower_clearance)
+        clearances.append(min(upper_clearance, lower_clearance))
+    
+    return min(clearances)
 
+
+def calc_edge_vertical_clearance(p, q, min_y, max_y, collision_detectors, num_robots, radii):
+    return min(calc_point_vertical_clearance(p, min_y, max_y, collision_detectors, num_robots, radii),
+            calc_point_vertical_clearance(q, min_y, max_y, collision_detectors, num_robots, radii))
+    """
+    clearances = []
     # for each robot check its clearance in the free space
-    # print(p, type(p))
     for i in range(num_robots):
         radius = radii[i]
+        curr_clearance = calc_point_vertical_clearance(p, min_y, max_y, collision_detectors, num_robots, radii)
+        
+        while curr_point[0] < q[0]:
+
+            curr_clearance = min()
+            curr_point = Point_2(curr_point)
         upper_clearance = FT(0)
         checker_point = Point_2(p[0], p[1] + radius)
         while min_y <= checker_point[1].to_double() <= max_y and collision_detectors[i].is_point_valid(checker_point):
@@ -197,7 +231,8 @@ def calc_point_vertical_clearance(p: Point_d, min_y, max_y, collision_detectors,
         clearances.append(min(upper_clearance, lower_clearance))
     
     return clearances
-
+    """
+    
 # check whether the edge pq is collision free
 # the collision detection module sits on top of CGAL arrangements
 def edge_valid(collision_detectors, p: Point_d, q: Point_d, num_robots, radii):
