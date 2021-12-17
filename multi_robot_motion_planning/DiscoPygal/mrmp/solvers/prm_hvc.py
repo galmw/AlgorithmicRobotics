@@ -84,12 +84,49 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
     distance = sum_distances.sum_distances(num_robots)
     custom_dist = sum_distances.numpy_sum_distance_for_n(num_robots)
 
-    _points = np.array([point_d_to_arr(p) for p in points])
+    def calc_point_vertical_clearance(p: Point_d):
+        clearances = []
+        # for each robot, check its clearance in the free space, and return the minimum
+        for i in range(num_robots):
+            step_size = radii[i].to_double() / 2
+            upper_clearance = 0
+            checker_point = Point_2(p[0], p[1] + FT(step_size))
+            while min_y <= checker_point[1].to_double() <= max_y and collision_detectors[i].is_point_valid(checker_point):
+                upper_clearance += step_size
+                checker_point = Point_2(checker_point[0], checker_point[1] + FT(step_size))
+            
+            lower_clearance = 0
+            checker_point = Point_2(p[0], p[1] - FT(step_size))
+            while min_y <= checker_point[1].to_double() <= max_y and collision_detectors[i].is_point_valid(checker_point):
+                # print("Checker point", checker_point, type(checker_point), "Valid", collision_detectors[i].is_point_valid(checker_point))
+                lower_clearance += step_size
+                checker_point = Point_2(checker_point[0], checker_point[1] - FT(step_size))
+            
+            # print("Upper:", upper_clearance, "Lower: ", lower_clearance)
+            clearances.append(min(upper_clearance, lower_clearance))
+        
+        return min(clearances)
 
-    
+    def calc_edge_vertical_clearance(p, q):
+        clearances = list()
+        curr_step = FT(0)
+        distance = FT(custom_dist(point_d_to_arr(p), point_d_to_arr(q)))
+        
+        while curr_step < distance:
+            curr_point = Point_2(p[0] + (q[0] - p[0]) * curr_step / distance, p[1] + (q[1] - p[1]) * curr_step / distance)
+            clearances.append(calc_point_vertical_clearance(curr_point))
+            curr_step += radii[0] / FT(2)
+        clearances.append(calc_point_vertical_clearance(q))
+        return min(clearances)
+
     def custom_weight(p ,q):
-        return 1 / (calc_edge_vertical_clearance(p, q, min_y, max_y, collision_detectors, num_robots, radii) + 0.01)
-
+        return 1 / (calc_edge_vertical_clearance(p, q) + 0.01)
+    
+    _points = np.array([point_d_to_arr(p) for p in points])    
+    """
+    def custom_weight(p ,q):
+        return calc_edge_vertical_clearance(p, q, min_y, max_y, collision_detectors, num_robots, radii)
+    """
     ########################
     # Constract the roadmap
     ########################
@@ -125,7 +162,12 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
     # Finding a valid path
     ########################
     if nx.has_path(G, sources, destinations):
+        """
+        T = nx.maximum_spanning_tree(G, weight='wight')
+        temp = next(nx.all_simple_paths(T, sources, destinations))  
+        """
         temp = nx.dijkstra_path(G, sources, destinations, weight='weight')
+
         lengths = [0 for _ in range(num_robots)]
         if len(temp) > 1:
             for i in range(len(temp) - 1):
@@ -141,7 +183,7 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
         for p in temp:
 
             try:
-                print('Point clearance:', p, "with clearance", calc_point_vertical_clearance(p, min_y, max_y, collision_detectors, num_robots, radii), file=writer)
+                print('Point clearance:', p, "with clearance", calc_point_vertical_clearance(p), file=writer)
             except Exception as e:
                 print(e, file=writer)
 
@@ -176,31 +218,7 @@ def sample_valid_landmark(min_x, max_x, min_y, max_y, collision_detectors, num_r
             return conversions.to_point_d(points)
 
 
-def calc_point_vertical_clearance(p: Point_d, min_y, max_y, collision_detectors, num_robots, radii):
-    clearances = []
-    # for each robot, check its clearance in the free space, and return the minimum
-    for i in range(num_robots):
-        step_size = radii[i].to_double() / 2
-        upper_clearance = 0
-        checker_point = Point_2(p[0], p[1] + FT(step_size))
-        while min_y <= checker_point[1].to_double() <= max_y and collision_detectors[i].is_point_valid(checker_point):
-            upper_clearance += step_size
-            checker_point = Point_2(checker_point[0], checker_point[1] + FT(step_size))
-        
-        lower_clearance = 0
-        checker_point = Point_2(p[0], p[1] - FT(step_size))
-        while min_y <= checker_point[1].to_double() <= max_y and collision_detectors[i].is_point_valid(checker_point):
-            # print("Checker point", checker_point, type(checker_point), "Valid", collision_detectors[i].is_point_valid(checker_point))
-            lower_clearance += step_size
-            checker_point = Point_2(checker_point[0], checker_point[1] - FT(step_size))
-        
-        # print("Upper:", upper_clearance, "Lower: ", lower_clearance)
-        clearances.append(min(upper_clearance, lower_clearance))
-    
-    return min(clearances)
 
-
-def calc_edge_vertical_clearance(p, q, min_y, max_y, collision_detectors, num_robots, radii):
     return min(calc_point_vertical_clearance(p, min_y, max_y, collision_detectors, num_robots, radii),
             calc_point_vertical_clearance(q, min_y, max_y, collision_detectors, num_robots, radii))
     """
