@@ -70,8 +70,10 @@ class Collision_detector:
     def is_point_valid(self, p: Point_2):
         p = TPoint(p.x(), p.y())
         obj = self.pl.locate(p)
-        if type(obj) == Face:
-            if obj.data() > 0:
+        if obj.is_face():
+            face = Face()
+            obj.get_face(face)
+            if face.data() > 0:
                 return False
         return True
 
