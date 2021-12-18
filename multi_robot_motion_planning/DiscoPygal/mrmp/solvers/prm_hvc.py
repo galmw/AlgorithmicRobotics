@@ -98,16 +98,15 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
             lower_clearance = 0
             checker_point = Point_2(p[0], p[1] - FT(step_size))
             while min_y <= checker_point[1].to_double() <= max_y and collision_detectors[i].is_point_valid(checker_point):
-                # print("Checker point", checker_point, type(checker_point), "Valid", collision_detectors[i].is_point_valid(checker_point))
                 lower_clearance += step_size
                 checker_point = Point_2(checker_point[0], checker_point[1] - FT(step_size))
             
-            # print("Upper:", upper_clearance, "Lower: ", lower_clearance)
             clearances.append(min(upper_clearance, lower_clearance))
         
         return min(clearances)
 
     def calc_edge_vertical_clearance(p, q):
+        # Find minimum of clearances along edge
         clearances = list()
         curr_step = FT(0)
         distance = FT(custom_dist(point_d_to_arr(p), point_d_to_arr(q)))
@@ -120,7 +119,7 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
         return min(clearances)
 
     def custom_weight(p ,q):
-        return 1 / (calc_edge_vertical_clearance(p, q) + 0.01)
+        return 1 / (calc_edge_vertical_clearance(p, q) ** 2 + 0.001)
     
     _points = np.array([point_d_to_arr(p) for p in points])    
 
@@ -142,12 +141,10 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
 
         if edge_valid(collision_detectors, p, destinations, num_robots, radii):
             d = custom_weight(p, destinations)
-            # Make transformed_distance into a distance that takes clearance into account
             G.add_edge(p, destinations, weight=d)
         for j in k_neighbors[0]:
             neighbor = points[j]
             if not G.has_edge(p, neighbor):
-                # check if we can add an edge to the graph
                 if edge_valid(collision_detectors, p, neighbor, num_robots, radii):
                     d = custom_weight(p, neighbor)
                     G.add_edge(p, neighbor, weight=d)
@@ -166,6 +163,7 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
         temp = nx.dijkstra_path(G, sources, destinations, weight='weight')
 
         lengths = [0 for _ in range(num_robots)]
+
         if len(temp) > 1:
             for i in range(len(temp) - 1):
                 p = temp[i]
@@ -177,14 +175,14 @@ def generate_path_disc(robots, obstacles, disc_obstacles, destinations, argument
         print("A path of length", sum(lengths), "was found", file=writer)
         for i in range(num_robots):
             print('Length traveled by robot', i, ":", lengths[i], file=writer)
+
         for p in temp:
-
-            try:
-                print('Point clearance:', p, "with clearance", calc_point_vertical_clearance(p), file=writer)
-            except Exception as e:
-                print(e, file=writer)
-
             path.append(conversions.to_point_2_list(p, num_robots))
+
+        clearances = list(map(lambda x: G.edges[x[0], x[1]].get('weight', 1), nx.utils.pairwise(temp)))
+        print('Edge clearances:', clearances, file=writer)
+        print('Path total clearance:', min(clearances), file=writer)
+    
     else:
         print("No path was found", file=writer)
     t1 = time.perf_counter()
